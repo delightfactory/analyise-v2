@@ -11,10 +11,11 @@ const Dashboard = () => {
   const [categoryData, setCategoryData] = useState([])
 
   useEffect(() => {
-    const data = loadFromLocalStorage()
-    if (data) {
-      const processor = new DataProcessor(data)
-      const overallStats = processor.getOverallStats()
+    const initData = async () => {
+      const data = await loadFromLocalStorage()
+      if (data) {
+        const processor = new DataProcessor(data)
+        const overallStats = processor.getOverallStats()
       const customers = processor.getCustomersAnalysis()
       const products = processor.getProductsAnalysis()
 
@@ -38,7 +39,9 @@ const Dashboard = () => {
         .slice(0, 6)
 
       setCategoryData(catData)
+      }
     }
+    initData()
   }, [])
 
   if (!stats) {

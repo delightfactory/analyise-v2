@@ -8,6 +8,30 @@ export class DataProcessor {
   }
 
   /**
+   * فلترة البيانات حسب الفترة الزمنية
+   */
+  filterByDateRange(startDate, endDate) {
+    if (!startDate || !endDate) return this.rawData;
+    
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999); // نهاية اليوم
+    
+    return this.rawData.filter(record => {
+      const recordDate = new Date(record.invoice_date);
+      return recordDate >= start && recordDate <= end;
+    });
+  }
+
+  /**
+   * الحصول على نسخة مفلترة من المعالج
+   */
+  getFilteredProcessor(startDate, endDate) {
+    const filteredData = this.filterByDateRange(startDate, endDate);
+    return new DataProcessor(filteredData);
+  }
+
+  /**
    * معالجة بيانات العملاء
    */
   getCustomersAnalysis() {
@@ -273,29 +297,182 @@ export class DataProcessor {
       maxGap: gaps.length > 0 ? Math.max(...gaps) : 0
     };
   }
+
+  /**
+   * تقسيم العملاء إلى نشطين وغير نشطين في فترة معينة
+   */
+  getCustomersByActivity(startDate, endDate) {
+    // الحصول على جميع العملاء
+    const allCustomers = this.getCustomersAnalysis();
+    
+    if (!startDate || !endDate) {
+      return {
+        active: allCustomers,
+        inactive: []
+      };
+    }
+    
+    // الحصول على العملاء النشطين في الفترة
+    const filteredProcessor = this.getFilteredProcessor(startDate, endDate);
+    const activeCustomers = filteredProcessor.getCustomersAnalysis();
+    
+    // الحصول على أكواد العملاء النشطين
+    const activeCustomerCodes = new Set(activeCustomers.map(c => c.code));
+    
+    // تقسيم العملاء
+    const active = allCustomers.filter(c => activeCustomerCodes.has(c.code));
+    const inactive = allCustomers.filter(c => !activeCustomerCodes.has(c.code));
+    
+    return {
+      active,
+      inactive
+    };
+  }
+
+  /**
+   * الحصول على بيانات عميل معين مع فلترة زمنية
+   */
+  getCustomerDetails(customerCode, startDate = null, endDate = null) {
+    const processor = startDate && endDate 
+      ? this.getFilteredProcessor(startDate, endDate)
+      : this;
+    
+    const customers = processor.getCustomersAnalysis();
+    return customers.find(c => c.code === customerCode);
+  }
+
+  /**
+   * تقسيم المنتجات إلى نشطة وغير نشطة في فترة معينة
+   */
+  getProductsByActivity(startDate, endDate) {
+    // الحصول على جميع المنتجات
+    const allProducts = this.getProductsAnalysis();
+    
+    if (!startDate || !endDate) {
+      return {
+        active: allProducts,
+        inactive: []
+      };
+    }
+    
+    // الحصول على المنتجات النشطة في الفترة
+    const filteredProcessor = this.getFilteredProcessor(startDate, endDate);
+    const activeProducts = filteredProcessor.getProductsAnalysis();
+    
+    // الحصول على أكواد المنتجات النشطة
+    const activeProductCodes = new Set(activeProducts.map(p => p.code));
+    
+    // تقسيم المنتجات
+    const active = allProducts.filter(p => activeProductCodes.has(p.code));
+    const inactive = allProducts.filter(p => !activeProductCodes.has(p.code));
+    
+    return {
+      active,
+      inactive
+    };
+  }
 }
 
 /**
- * حفظ البيانات في LocalStorage
+ * حفظ البيانات في LocalStorage مع الضغط
  */
 export const saveToLocalStorage = (data) => {
   try {
-    localStorage.setItem('salesData', JSON.stringify(data));
-    localStorage.setItem('salesDataTimestamp', new Date().toISOString());
+    // استيراد مكتبة الضغط
+    import('lz-string').then(LZString => {
+      // تقليل حجم البيانات بحذف الحقول غير الضرورية
+      const optimizedData = data.map(record => ({
+        cn: record.customer_name,
+        cc: record.customer_code,
+        ci: record.city,
+        g: record.governorate,
+        pn: record.product_name,
+        pc: record.product_code,
+        cat: record.category,
+        q: parseFloat(record.quantity) || 0,
+        p: parseFloat(record.price) || 0,
+        it: parseFloat(record.item_total) || 0,
+        in: record.invoice_number,
+        id: record.invoice_date
+      }));
+      
+      // ضغط البيانات
+      const compressed = LZString.default.compressToUTF16(JSON.stringify(optimizedData));
+      
+      // حفظ البيانات المضغوطة
+      localStorage.setItem('salesData_compressed', compressed);
+      localStorage.setItem('salesData_version', '2.0'); // نسخة جديدة مع الضغط
+      localStorage.setItem('salesDataTimestamp', new Date().toISOString());
+      
+      console.log('✓ تم حفظ البيانات بنجاح');
+      console.log(`  - حجم البيانات الأصلي: ${(JSON.stringify(data).length / 1024).toFixed(2)} KB`);
+      console.log(`  - حجم البيانات المضغوطة: ${(compressed.length / 1024).toFixed(2)} KB`);
+      console.log(`  - نسبة الضغط: ${((1 - compressed.length / JSON.stringify(data).length) * 100).toFixed(1)}%`);
+    });
+    
     return true;
   } catch (error) {
     console.error('Error saving to localStorage:', error);
-    return false;
+    
+    // محاولة حفظ بدون ضغط كحل احتياطي
+    try {
+      localStorage.clear(); // مسح كل البيانات القديمة
+      localStorage.setItem('salesData', JSON.stringify(data));
+      localStorage.setItem('salesDataTimestamp', new Date().toISOString());
+      console.warn('تم الحفظ بدون ضغط (قد يسبب مشاكل مع الملفات الكبيرة)');
+      return true;
+    } catch (fallbackError) {
+      console.error('فشل الحفظ حتى بدون ضغط:', fallbackError);
+      return false;
+    }
   }
 };
 
 /**
- * تحميل البيانات من LocalStorage
+ * تحميل البيانات من LocalStorage مع دعم الضغط
  */
-export const loadFromLocalStorage = () => {
+export const loadFromLocalStorage = async () => {
   try {
+    // التحقق من وجود النسخة المضغوطة
+    const version = localStorage.getItem('salesData_version');
+    
+    if (version === '2.0') {
+      // تحميل البيانات المضغوطة
+      const compressed = localStorage.getItem('salesData_compressed');
+      if (compressed) {
+        const LZString = await import('lz-string');
+        const decompressed = LZString.default.decompressFromUTF16(compressed);
+        const optimizedData = JSON.parse(decompressed);
+        
+        // إعادة البيانات إلى الشكل الأصلي
+        const originalData = optimizedData.map(record => ({
+          customer_name: record.cn,
+          customer_code: record.cc,
+          city: record.ci,
+          governorate: record.g,
+          product_name: record.pn,
+          product_code: record.pc,
+          category: record.cat,
+          quantity: record.q,
+          price: record.p,
+          item_total: record.it,
+          invoice_number: record.in,
+          invoice_date: record.id
+        }));
+        
+        console.log('✓ تم تحميل البيانات المضغوطة بنجاح');
+        return originalData;
+      }
+    }
+    
+    // تحميل البيانات القديمة (غير المضغوطة)
     const data = localStorage.getItem('salesData');
-    return data ? JSON.parse(data) : null;
+    if (data) {
+      console.log('⚠ تم تحميل بيانات بالنسخة القديمة (غير مضغوطة)');
+      return JSON.parse(data);
+    }
+    
+    return null;
   } catch (error) {
     console.error('Error loading from localStorage:', error);
     return null;

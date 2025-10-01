@@ -3,21 +3,67 @@ import { Search, SortAsc, SortDesc, TrendingUp, ShoppingCart, Package, Calendar,
 import { loadFromLocalStorage, DataProcessor } from '../utils/dataProcessor'
 import { formatNumber, formatCurrency, formatDate, formatDuration } from '../utils/formatters'
 import Modal, { ModalContent, StatsGrid, DataTable } from '../components/Modal'
+import DateRangeFilter from '../components/DateRangeFilter'
 
 const Customers = () => {
   const [customers, setCustomers] = useState([])
   const [filteredCustomers, setFilteredCustomers] = useState([])
+  const [inactiveCustomers, setInactiveCustomers] = useState([])
+  const [filteredInactiveCustomers, setFilteredInactiveCustomers] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [sortConfig, setSortConfig] = useState({ key: 'totalPurchases', direction: 'desc' })
   const [selectedCustomer, setSelectedCustomer] = useState(null)
+  const [dateFilter, setDateFilter] = useState(null)
+  const [dataProcessor, setDataProcessor] = useState(null)
+  const [activeTab, setActiveTab] = useState('active') // 'active' or 'inactive'
 
+  // تحميل البيانات الأولية
   useEffect(() => {
-    const data = loadFromLocalStorage()
-    if (data) {
-      const processor = new DataProcessor(data)
-      const customersData = processor.getCustomersAnalysis()
+    const initData = async () => {
+      const data = await loadFromLocalStorage()
+      if (data) {
+        const processor = new DataProcessor(data)
+        setDataProcessor(processor)
+        loadCustomers(processor, null)
+      }
+    }
+    initData()
+  }, [])
+
+  // تحديث العملاء عند تغيير الفلتر الزمني
+  useEffect(() => {
+    if (dataProcessor) {
+      loadCustomers(dataProcessor, dateFilter)
+      // إعادة تعيين التبويب عند إزالة الفلتر
+      if (!dateFilter) {
+        setActiveTab('active')
+      }
+    }
+  }, [dateFilter])
+
+  // دالة تحميل العملاء مع الفلترة
+  const loadCustomers = (processor, filter) => {
+    if (filter) {
+      // تقسيم العملاء إلى نشطين وغير نشطين
+      const { active, inactive } = processor.getCustomersByActivity(filter.startDate, filter.endDate)
       
-      // حساب المسافة الزمنية بين الفواتير
+      // إثراء البيانات بحساب المسافات الزمنية
+      const enrichedActive = active.map(customer => ({
+        ...customer,
+        invoiceGaps: processor.calculateInvoiceGaps(customer.invoices)
+      }))
+      
+      const enrichedInactive = inactive.map(customer => ({
+        ...customer,
+        invoiceGaps: processor.calculateInvoiceGaps(customer.invoices)
+      }))
+      
+      setCustomers(enrichedActive)
+      setFilteredCustomers(enrichedActive)
+      setInactiveCustomers(enrichedInactive)
+    } else {
+      // عرض جميع العملاء بدون فلترة
+      const customersData = processor.getCustomersAnalysis()
       const enrichedCustomers = customersData.map(customer => ({
         ...customer,
         invoiceGaps: processor.calculateInvoiceGaps(customer.invoices)
@@ -25,46 +71,79 @@ const Customers = () => {
       
       setCustomers(enrichedCustomers)
       setFilteredCustomers(enrichedCustomers)
+      setInactiveCustomers([])
     }
-  }, [])
+  }
 
-  // البحث والفلترة
-  useEffect(() => {
-    let filtered = customers.filter(customer =>
-      customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.governorate.toLowerCase().includes(searchTerm.toLowerCase())
+  // دالة مساعدة للبحث والفلترة
+  const applySearchAndSort = (customerList, search, sort) => {
+    // البحث
+    let filtered = customerList.filter(customer =>
+      customer.name.toLowerCase().includes(search.toLowerCase()) ||
+      customer.code.toLowerCase().includes(search.toLowerCase()) ||
+      customer.city.toLowerCase().includes(search.toLowerCase()) ||
+      customer.governorate.toLowerCase().includes(search.toLowerCase())
     )
 
     // الترتيب
     filtered.sort((a, b) => {
-      let aValue = a[sortConfig.key]
-      let bValue = b[sortConfig.key]
+      let aValue = a[sort.key]
+      let bValue = b[sort.key]
 
       // معالجة التواريخ
-      if (sortConfig.key === 'lastPurchaseDate') {
+      if (sort.key === 'lastPurchaseDate') {
         aValue = aValue ? new Date(aValue).getTime() : 0
         bValue = bValue ? new Date(bValue).getTime() : 0
       }
 
       if (aValue < bValue) {
-        return sortConfig.direction === 'asc' ? -1 : 1
+        return sort.direction === 'asc' ? -1 : 1
       }
       if (aValue > bValue) {
-        return sortConfig.direction === 'asc' ? 1 : -1
+        return sort.direction === 'asc' ? 1 : -1
       }
       return 0
     })
 
+    return filtered
+  }
+
+  // البحث والفلترة للعملاء النشطين
+  useEffect(() => {
+    const filtered = applySearchAndSort(customers, searchTerm, sortConfig)
     setFilteredCustomers(filtered)
   }, [searchTerm, sortConfig, customers])
+
+  // البحث والفلترة للعملاء غير النشطين
+  useEffect(() => {
+    const filtered = applySearchAndSort(inactiveCustomers, searchTerm, sortConfig)
+    setFilteredInactiveCustomers(filtered)
+  }, [searchTerm, sortConfig, inactiveCustomers])
 
   const handleSort = (key) => {
     setSortConfig(prev => ({
       key,
       direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
     }))
+  }
+
+  const handleCustomerClick = (customer) => {
+    if (dateFilter && dataProcessor) {
+      // تحميل تفاصيل العميل مع الفلترة الزمنية
+      const filteredCustomer = dataProcessor.getCustomerDetails(
+        customer.code,
+        dateFilter.startDate,
+        dateFilter.endDate
+      )
+      if (filteredCustomer) {
+        setSelectedCustomer({
+          ...filteredCustomer,
+          invoiceGaps: dataProcessor.calculateInvoiceGaps(filteredCustomer.invoices)
+        })
+      }
+    } else {
+      setSelectedCustomer(customer)
+    }
   }
 
   const SortIcon = ({ columnKey }) => {
@@ -82,6 +161,12 @@ const Customers = () => {
         <p className="text-gray-600 dark:text-gray-400 mt-1">إدارة ومتابعة بيانات العملاء</p>
       </div>
 
+      {/* Date Range Filter */}
+      <DateRangeFilter
+        onFilterChange={setDateFilter}
+        className="animate-fadeIn"
+      />
+
       {/* Search and Stats */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft hover:shadow-medium p-6 border border-gray-200 dark:border-gray-700 transition-all duration-300">
         <div className="flex items-center gap-4 mb-4">
@@ -96,13 +181,65 @@ const Customers = () => {
             />
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400">
-            عرض {formatNumber(filteredCustomers.length)} من {formatNumber(customers.length)} عميل
+            عرض {formatNumber(activeTab === 'active' ? filteredCustomers.length : filteredInactiveCustomers.length)} من {formatNumber(activeTab === 'active' ? customers.length : inactiveCustomers.length)} عميل
           </div>
         </div>
       </div>
 
       {/* Customers Table */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft hover:shadow-medium border border-gray-200 dark:border-gray-700 overflow-hidden transition-all duration-300">
+        {/* Tabs - only show when date filter is active and there are inactive customers */}
+        {dateFilter && inactiveCustomers.length > 0 ? (
+          <div className="flex border-b border-gray-200 dark:border-gray-700">
+            <button
+              onClick={() => setActiveTab('active')}
+              className={`flex-1 py-4 px-6 text-sm font-medium transition-all duration-200 relative ${
+                activeTab === 'active'
+                  ? 'text-green-600 dark:text-green-400 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 border-b-2 border-green-600 dark:border-green-400'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <TrendingUp className="w-4 h-4" />
+                <span>العملاء النشطون</span>
+                <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                  activeTab === 'active' 
+                    ? 'bg-green-600 dark:bg-green-500 text-white' 
+                    : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                }`}>
+                  {formatNumber(filteredCustomers.length)}
+                </span>
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('inactive')}
+              className={`flex-1 py-4 px-6 text-sm font-medium transition-all duration-200 relative ${
+                activeTab === 'inactive'
+                  ? 'text-orange-600 dark:text-orange-400 bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20 border-b-2 border-orange-600 dark:border-orange-400'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <Package className="w-4 h-4" />
+                <span>بدون نشاط</span>
+                <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                  activeTab === 'inactive' 
+                    ? 'bg-orange-600 dark:bg-orange-500 text-white' 
+                    : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                }`}>
+                  {formatNumber(filteredInactiveCustomers.length)}
+                </span>
+              </div>
+            </button>
+          </div>
+        ) : (
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">جميع العملاء</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              عدد العملاء: {formatNumber(filteredCustomers.length)}
+            </p>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50 dark:bg-gray-700">
@@ -158,11 +295,15 @@ const Customers = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-              {filteredCustomers.map((customer) => (
+              {(activeTab === 'active' ? filteredCustomers : filteredInactiveCustomers).map((customer) => (
                 <tr
                   key={customer.code}
-                  onClick={() => setSelectedCustomer(customer)}
-                  className="hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer transition-colors"
+                  onClick={() => activeTab === 'active' ? handleCustomerClick(customer) : setSelectedCustomer(customer)}
+                  className={`cursor-pointer transition-colors ${
+                    activeTab === 'active'
+                      ? 'hover:bg-blue-50 dark:hover:bg-blue-900/20'
+                      : 'hover:bg-orange-50 dark:hover:bg-orange-900/20 opacity-75 hover:opacity-100'
+                  }`}
                 >
                   <td className="px-6 py-4">
                     <div>

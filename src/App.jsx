@@ -11,8 +11,11 @@ function App() {
   const [hasData, setHasData] = useState(false)
 
   useEffect(() => {
-    const data = loadFromLocalStorage()
-    setHasData(!!data)
+    const checkData = async () => {
+      const data = await loadFromLocalStorage()
+      setHasData(!!data)
+    }
+    checkData()
   }, [])
 
   return (

@@ -3,33 +3,75 @@ import { Search, SortAsc, SortDesc, X, TrendingUp, Users, ShoppingCart, Percent,
 import { loadFromLocalStorage, DataProcessor } from '../utils/dataProcessor'
 import { formatNumber, formatCurrency, formatPercentage, formatDate } from '../utils/formatters'
 import Modal, { ModalContent, StatsGrid, DataTable } from '../components/Modal'
+import DateRangeFilter from '../components/DateRangeFilter'
 
 const Products = () => {
-  const [activeTab, setActiveTab] = useState('products') // 'products' or 'bundles'
+  const [activeTab, setActiveTab] = useState('products') // 'products', 'products-inactive', or 'bundles'
   const [products, setProducts] = useState([])
+  const [inactiveProducts, setInactiveProducts] = useState([])
   const [bundles, setBundles] = useState([])
   const [filteredProducts, setFilteredProducts] = useState([])
+  const [filteredInactiveProducts, setFilteredInactiveProducts] = useState([])
   const [filteredBundles, setFilteredBundles] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [sortConfig, setSortConfig] = useState({ key: 'totalSales', direction: 'desc' })
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [selectedBundle, setSelectedBundle] = useState(null)
+  const [dateFilter, setDateFilter] = useState(null)
+  const [dataProcessor, setDataProcessor] = useState(null)
 
   useEffect(() => {
-    const data = loadFromLocalStorage()
-    if (data) {
-      const processor = new DataProcessor(data)
+    const initData = async () => {
+      const data = await loadFromLocalStorage()
+      if (data) {
+        const processor = new DataProcessor(data)
+        setDataProcessor(processor)
+        loadProductsData(processor, null)
+      }
+    }
+    initData()
+  }, [])
+
+  useEffect(() => {
+    if (dataProcessor) {
+      loadProductsData(dataProcessor, dateFilter)
+      // إعادة تعيين التبويب عند إزالة الفلتر
+      if (!dateFilter) {
+        setActiveTab('products')
+      }
+    }
+  }, [dateFilter])
+
+  const loadProductsData = (processor, filter) => {
+    if (filter) {
+      // تقسيم المنتجات إلى نشطة وغير نشطة
+      const { active, inactive } = processor.getProductsByActivity(filter.startDate, filter.endDate)
+      
+      // الحصول على المنتجات المشتراة معاً من الفترة النشطة
+      const filteredProcessor = processor.getFilteredProcessor(filter.startDate, filter.endDate)
+      const bundlesData = filteredProcessor.getProductBundlesAnalysis()
+      
+      setProducts(active)
+      setFilteredProducts(active)
+      setInactiveProducts(inactive)
+      setFilteredInactiveProducts(inactive)
+      setBundles(bundlesData)
+      setFilteredBundles(bundlesData)
+    } else {
+      // عرض جميع المنتجات بدون فلترة
       const productsData = processor.getProductsAnalysis()
       const bundlesData = processor.getProductBundlesAnalysis()
       
       setProducts(productsData)
       setFilteredProducts(productsData)
+      setInactiveProducts([])
+      setFilteredInactiveProducts([])
       setBundles(bundlesData)
       setFilteredBundles(bundlesData)
     }
-  }, [])
+  }
 
-  // البحث والفلترة للمنتجات
+  // البحث والفلترة للمنتجات النشطة
   useEffect(() => {
     if (activeTab === 'products') {
       let filtered = products.filter(product =>
@@ -50,6 +92,27 @@ const Products = () => {
     }
   }, [searchTerm, sortConfig, products, activeTab])
 
+  // البحث والفلترة للمنتجات غير النشطة
+  useEffect(() => {
+    if (activeTab === 'products-inactive') {
+      let filtered = inactiveProducts.filter(product =>
+        product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.category.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+
+      filtered.sort((a, b) => {
+        const aValue = a[sortConfig.key]
+        const bValue = b[sortConfig.key]
+        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1
+        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1
+        return 0
+      })
+
+      setFilteredInactiveProducts(filtered)
+    }
+  }, [searchTerm, sortConfig, inactiveProducts, activeTab])
+
   // البحث للمنتجات المشتراة معاً
   useEffect(() => {
     if (activeTab === 'bundles') {
@@ -62,6 +125,11 @@ const Products = () => {
       setFilteredBundles(filtered)
     }
   }, [searchTerm, bundles, activeTab])
+
+  // مسح البحث عند التبديل بين التبويبات
+  useEffect(() => {
+    setSearchTerm('')
+  }, [activeTab])
 
   const handleSort = (key) => {
     setSortConfig(prev => ({
@@ -76,36 +144,70 @@ const Products = () => {
       ? <SortAsc className="w-4 h-4" />
       : <SortDesc className="w-4 h-4" />
   }
-
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">المنتجات</h1>
-        <p className="text-gray-600 dark:text-gray-400 mt-1">تحليل أداء المنتجات والمنتجات المشتراة معاً</p>
+        <p className="text-gray-600 dark:text-gray-400 mt-1">تحليل وإدارة المنتجات</p>
       </div>
 
-      {/* Tabs */}
+      {/* Date Range Filter */}
+      <DateRangeFilter
+        onFilterChange={setDateFilter}
+        className="animate-fadeIn"
+      />
+
+      {/* Tabs and Search */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft hover:shadow-medium border border-gray-200 dark:border-gray-700 transition-all duration-300">
         <div className="flex border-b border-gray-200 dark:border-gray-700">
           <button
             onClick={() => setActiveTab('products')}
             className={`flex-1 py-4 px-6 text-sm font-medium transition-colors ${
               activeTab === 'products'
-                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                ? 'text-green-600 dark:text-green-400 border-b-2 border-green-600 dark:border-green-400 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20'
                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
             }`}
           >
             <div className="flex items-center justify-center gap-2">
-              <Package2 className="w-4 h-4" />
-              <span>جميع المنتجات ({formatNumber(products.length)})</span>
+              <TrendingUp className="w-4 h-4" />
+              <span>{dateFilter ? 'المنتجات النشطة' : 'جميع المنتجات'}</span>
+              <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                activeTab === 'products' 
+                  ? 'bg-green-600 dark:bg-green-500 text-white' 
+                  : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+              }`}>
+                {formatNumber(filteredProducts.length)}
+              </span>
             </div>
           </button>
+          {dateFilter && inactiveProducts.length > 0 && (
+            <button
+              onClick={() => setActiveTab('products-inactive')}
+              className={`flex-1 py-4 px-6 text-sm font-medium transition-colors ${
+                activeTab === 'products-inactive'
+                  ? 'text-orange-600 dark:text-orange-400 border-b-2 border-orange-600 dark:border-orange-400 bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <Package2 className="w-4 h-4" />
+                <span>بدون نشاط</span>
+                <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                  activeTab === 'products-inactive' 
+                    ? 'bg-orange-600 dark:bg-orange-500 text-white' 
+                    : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                }`}>
+                  {formatNumber(filteredInactiveProducts.length)}
+                </span>
+              </div>
+            </button>
+          )}
           <button
             onClick={() => setActiveTab('bundles')}
             className={`flex-1 py-4 px-6 text-sm font-medium transition-colors ${
               activeTab === 'bundles'
-                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400 bg-purple-50 dark:bg-purple-900/20'
                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
             }`}
           >
@@ -123,7 +225,11 @@ const Products = () => {
               <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-5 h-5" />
               <input
                 type="text"
-                placeholder={activeTab === 'products' ? 'البحث عن منتج...' : 'البحث في المنتجات المشتراة معاً...'}
+                placeholder={
+                  activeTab === 'products' ? 'البحث عن منتج...' :
+                  activeTab === 'products-inactive' ? 'البحث في المنتجات غير النشطة...' :
+                  'البحث في المنتجات المشتراة معاً...'
+                }
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pr-10 pl-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
@@ -132,6 +238,8 @@ const Products = () => {
             <div className="text-sm text-gray-600 dark:text-gray-400">
               {activeTab === 'products' 
                 ? `عرض ${formatNumber(filteredProducts.length)} من ${formatNumber(products.length)} منتج`
+                : activeTab === 'products-inactive'
+                ? `عرض ${formatNumber(filteredInactiveProducts.length)} من ${formatNumber(inactiveProducts.length)} منتج`
                 : `عرض ${formatNumber(filteredBundles.length)} من ${formatNumber(bundles.length)} مجموعة`
               }
             </div>
@@ -147,6 +255,16 @@ const Products = () => {
           onSort={handleSort}
           onProductClick={setSelectedProduct}
           SortIcon={SortIcon}
+          isInactive={false}
+        />
+      ) : activeTab === 'products-inactive' ? (
+        <ProductsTable
+          products={filteredInactiveProducts}
+          sortConfig={sortConfig}
+          onSort={handleSort}
+          onProductClick={setSelectedProduct}
+          SortIcon={SortIcon}
+          isInactive={true}
         />
       ) : (
         <BundlesTable
@@ -174,8 +292,10 @@ const Products = () => {
 }
 
 // جدول المنتجات
-const ProductsTable = ({ products, sortConfig, onSort, onProductClick, SortIcon }) => (
-  <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft hover:shadow-medium border border-gray-200 dark:border-gray-700 overflow-hidden transition-all duration-300">
+const ProductsTable = ({ products, sortConfig, onSort, onProductClick, SortIcon, isInactive = false }) => (
+  <div className={`bg-white dark:bg-gray-800 rounded-xl shadow-soft hover:shadow-medium overflow-hidden transition-all duration-300 ${
+    isInactive ? 'border-2 border-orange-300 dark:border-orange-700' : 'border border-gray-200 dark:border-gray-700'
+  }`}>
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead className="bg-gray-50 dark:bg-gray-700">
@@ -241,7 +361,11 @@ const ProductsTable = ({ products, sortConfig, onSort, onProductClick, SortIcon 
             <tr
               key={product.code}
               onClick={() => onProductClick(product)}
-              className="hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer transition-colors"
+              className={`cursor-pointer transition-colors ${
+                isInactive
+                  ? 'hover:bg-orange-50 dark:hover:bg-orange-900/20 opacity-75 hover:opacity-100'
+                  : 'hover:bg-blue-50 dark:hover:bg-blue-900/20'
+              }`}
             >
               <td className="px-6 py-4">
                 <div>

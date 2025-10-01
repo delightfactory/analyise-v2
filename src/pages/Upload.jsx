@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Upload as UploadIcon, FileText, CheckCircle, AlertCircle, Trash2, Loader2 } from 'lucide-react'
 import { saveToLocalStorage, clearLocalStorage, loadFromLocalStorage } from '../utils/dataProcessor'
 import { cleanExcelData, validateExcelFile } from '../utils/excelCleaner'
@@ -10,15 +10,18 @@ const Upload = ({ onDataLoaded }) => {
   const [stats, setStats] = useState(null)
 
   // تحميل الإحصائيات إذا كانت البيانات موجودة
-  useState(() => {
-    const data = loadFromLocalStorage()
-    if (data) {
-      setStats({
-        records: data.length,
-        customers: new Set(data.map(r => r.customer_code)).size,
-        products: new Set(data.map(r => r.product_code)).size
-      })
+  useEffect(() => {
+    const initStats = async () => {
+      const data = await loadFromLocalStorage()
+      if (data) {
+        setStats({
+          records: data.length,
+          customers: new Set(data.map(r => r.customer_code)).size,
+          products: new Set(data.map(r => r.product_code)).size
+        })
+      }
     }
+    initStats()
   }, [])
 
   const handleDragOver = (e) => {
