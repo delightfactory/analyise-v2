@@ -289,33 +289,41 @@ const CustomerDetailsModal = ({ customer, onClose }) => {
           <DataTable
             columns={productColumns}
             data={customer.products || []}
-            maxHeight="300px"
             emptyMessage="لا توجد منتجات"
           />
         </div>
 
         {/* Invoice Timeline */}
         <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">سجل الفواتير</h3>
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {(customer.invoices || []).map((invoice, index) => (
-              <div key={invoice.number} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors">
-                <div className="flex items-center gap-3">
-                  <span className="flex items-center justify-center w-8 h-8 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full text-sm font-semibold">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">
+            سجل الفواتير ({formatNumber((customer.invoices || []).length)} فاتورة)
+          </h3>
+          <div className="grid gap-3">
+            {(customer.invoices || []).slice(0, 10).map((invoice, index) => (
+              <div key={invoice.number} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800/50 dark:to-gray-700/50 rounded-lg hover:from-blue-50 hover:to-blue-100 dark:hover:from-blue-900/20 dark:hover:to-blue-800/20 transition-all duration-200 border border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-4">
+                  <span className="flex items-center justify-center w-10 h-10 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full text-sm font-bold shadow-sm">
                     {formatNumber(index + 1)}
                   </span>
                   <div>
-                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100">فاتورة #{invoice.number}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                    <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">فاتورة #{invoice.number}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                       {formatDate(invoice.date, 'long')}
                     </div>
                   </div>
                 </div>
-                <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                  {formatCurrency(invoice.total)}
+                <div className="text-right">
+                  <div className="text-lg font-bold text-green-600 dark:text-green-400">
+                    {formatCurrency(invoice.total)}
+                  </div>
                 </div>
               </div>
             ))}
+            {(customer.invoices || []).length > 10 && (
+              <div className="text-center py-2 text-sm text-gray-500 dark:text-gray-400">
+                وعرض {formatNumber((customer.invoices || []).length - 10)} فاتورة أخرى...
+              </div>
+            )}
           </div>
         </div>
 

@@ -60,14 +60,17 @@ export class DataProcessor {
         customer.invoices.push({
           number: invoiceKey,
           date: record.invoice_date,
-          total: parseFloat(record.invoice_total) || 0
+          total: parseFloat(record.item_total) || 0
         });
         customer.orderCount++;
-        
-        // تحديث آخر تاريخ شراء
-        if (!customer.lastPurchaseDate || record.invoice_date > customer.lastPurchaseDate) {
-          customer.lastPurchaseDate = record.invoice_date;
-        }
+      } else {
+        // إضافة قيمة الصنف إلى إجمالي الفاتورة
+        existingInvoice.total += parseFloat(record.item_total) || 0;
+      }
+      
+      // تحديث آخر تاريخ شراء
+      if (!customer.lastPurchaseDate || record.invoice_date > customer.lastPurchaseDate) {
+        customer.lastPurchaseDate = record.invoice_date;
       }
     });
 

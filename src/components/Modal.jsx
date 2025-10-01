@@ -279,7 +279,7 @@ export const DataTable = ({
   const DesktopView = () => (
     <div className="hidden sm:block border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
       <div className="overflow-x-auto">
-        <div className="overflow-y-auto" style={{ maxHeight }}>
+        <div className={maxHeight ? "overflow-y-auto" : ""} style={maxHeight ? { maxHeight } : {}}>
           <table className="w-full">
             <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0">
               <tr>
