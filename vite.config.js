@@ -11,7 +11,7 @@ export default defineConfig({
     // تحسينات البناء للإنتاج
     outDir: 'dist',
     sourcemap: false,
-    minify: 'terser',
+    minify: 'esbuild',
     rollupOptions: {
       output: {
         manualChunks: {
@@ -20,7 +20,11 @@ export default defineConfig({
           router: ['react-router-dom'],
           charts: ['recharts'],
           utils: ['date-fns', 'xlsx']
-        }
+        },
+        // تحسين أسماء الملفات
+        chunkFileNames: 'assets/[name]-[hash].js',
+        entryFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]'
       }
     },
     // ضغط الأصول

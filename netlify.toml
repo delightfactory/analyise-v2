@@ -8,23 +8,9 @@
   # متغيرات البيئة
   environment = { NODE_VERSION = "18" }
 
+# إعدادات المعالجة - دع Vite يتولى التحسين
 [build.processing]
-  # تحسين الصور
   skip_processing = false
-
-[build.processing.css]
-  # تحسين CSS
-  bundle = true
-  minify = true
-
-[build.processing.js]
-  # تحسين JavaScript
-  bundle = true
-  minify = true
-
-[build.processing.html]
-  # تحسين HTML
-  pretty_urls = true
 
 # إعادة توجيه للتطبيقات أحادية الصفحة (SPA)
 [[redirects]]
