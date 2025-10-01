@@ -43,20 +43,35 @@ const Products = () => {
   }, [dateFilter])
 
   const loadProductsData = (processor, filter) => {
-    if (filter) {
-      // تقسيم المنتجات إلى نشطة وغير نشطة
-      const { active, inactive } = processor.getProductsByActivity(filter.startDate, filter.endDate)
+    if (filter && (filter.startDate || filter.governorate || filter.city)) {
+      // استخدام الفلترة الشاملة
+      const filteredProcessor = processor.getCompleteFilteredProcessor(filter)
       
-      // الحصول على المنتجات المشتراة معاً من الفترة النشطة
-      const filteredProcessor = processor.getFilteredProcessor(filter.startDate, filter.endDate)
-      const bundlesData = filteredProcessor.getProductBundlesAnalysis()
-      
-      setProducts(active)
-      setFilteredProducts(active)
-      setInactiveProducts(inactive)
-      setFilteredInactiveProducts(inactive)
-      setBundles(bundlesData)
-      setFilteredBundles(bundlesData)
+      // إذا كان هناك فلتر زمني، نقسم إلى نشطة وغير نشطة
+      if (filter.startDate && filter.endDate) {
+        const { active, inactive } = processor.getProductsByActivity(filter.startDate, filter.endDate)
+        
+        // المنتجات المشتراة معاً من البيانات المفلترة
+        const bundlesData = filteredProcessor.getProductBundlesAnalysis()
+        
+        setProducts(active)
+        setFilteredProducts(active)
+        setInactiveProducts(inactive)
+        setFilteredInactiveProducts(inactive)
+        setBundles(bundlesData)
+        setFilteredBundles(bundlesData)
+      } else {
+        // فقط فلتر منطقة بدون فلتر زمني
+        const productsData = filteredProcessor.getProductsAnalysis()
+        const bundlesData = filteredProcessor.getProductBundlesAnalysis()
+        
+        setProducts(productsData)
+        setFilteredProducts(productsData)
+        setInactiveProducts([])
+        setFilteredInactiveProducts([])
+        setBundles(bundlesData)
+        setFilteredBundles(bundlesData)
+      }
     } else {
       // عرض جميع المنتجات بدون فلترة
       const productsData = processor.getProductsAnalysis()
@@ -155,6 +170,7 @@ const Products = () => {
       {/* Date Range Filter */}
       <DateRangeFilter
         onFilterChange={setDateFilter}
+        dataProcessor={dataProcessor}
         className="animate-fadeIn"
       />
 

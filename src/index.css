@@ -108,9 +108,11 @@ input, textarea, select {
 @keyframes fade-in {
   from {
     opacity: 0;
+    transform: translateY(-10px);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -123,10 +125,30 @@ input, textarea, select {
   }
 }
 
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  10%, 30%, 50%, 70%, 90% {
+    transform: translateX(-5px);
+  }
+  20%, 40%, 60%, 80% {
+    transform: translateX(5px);
+  }
+}
+
 .animate-in {
   animation-duration: 0.3s;
   animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   animation-fill-mode: both;
+}
+
+.animate-fadeIn {
+  animation: fade-in 0.5s ease-out;
+}
+
+.animate-shake {
+  animation: shake 0.5s ease-in-out;
 }
 
 .fade-in-0 {

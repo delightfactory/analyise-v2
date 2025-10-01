@@ -371,6 +371,76 @@ export class DataProcessor {
       inactive
     };
   }
+
+  /**
+   * الحصول على قائمة المحافظات من البيانات
+   */
+  getGovernorates() {
+    const governorates = new Set(this.rawData.map(record => record.governorate).filter(Boolean));
+    return Array.from(governorates).sort((a, b) => a.localeCompare(b, 'ar'));
+  }
+
+  /**
+   * الحصول على المدن حسب المحافظة
+   */
+  getCitiesByGovernorate(governorate) {
+    if (!governorate) {
+      // إرجاع جميع المدن
+      const cities = new Set(this.rawData.map(record => record.city).filter(Boolean));
+      return Array.from(cities).sort((a, b) => a.localeCompare(b, 'ar'));
+    }
+    
+    const cities = new Set(
+      this.rawData
+        .filter(record => record.governorate === governorate)
+        .map(record => record.city)
+        .filter(Boolean)
+    );
+    return Array.from(cities).sort((a, b) => a.localeCompare(b, 'ar'));
+  }
+
+  /**
+   * فلترة البيانات حسب المنطقة
+   */
+  filterByLocation(governorate = null, city = null) {
+    return this.rawData.filter(record => {
+      if (governorate && record.governorate !== governorate) return false;
+      if (city && record.city !== city) return false;
+      return true;
+    });
+  }
+
+  /**
+   * الحصول على نسخة مفلترة من المعالج مع دعم التاريخ والمنطقة
+   */
+  getCompleteFilteredProcessor(filters = {}) {
+    const { startDate, endDate, governorate, city } = filters;
+    
+    let filteredData = this.rawData;
+    
+    // فلترة بالتاريخ
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      
+      filteredData = filteredData.filter(record => {
+        const recordDate = new Date(record.invoice_date);
+        return recordDate >= start && recordDate <= end;
+      });
+    }
+    
+    // فلترة بالمنطقة
+    if (governorate) {
+      filteredData = filteredData.filter(record => record.governorate === governorate);
+    }
+    
+    if (city) {
+      filteredData = filteredData.filter(record => record.city === city);
+    }
+    
+    return new DataProcessor(filteredData);
+  }
 }
 
 /**

@@ -43,24 +43,58 @@ const Customers = () => {
 
   // دالة تحميل العملاء مع الفلترة
   const loadCustomers = (processor, filter) => {
-    if (filter) {
-      // تقسيم العملاء إلى نشطين وغير نشطين
-      const { active, inactive } = processor.getCustomersByActivity(filter.startDate, filter.endDate)
+    if (filter && (filter.startDate || filter.governorate || filter.city)) {
+      // استخدام الفلترة الشاملة
+      const filteredProcessor = processor.getCompleteFilteredProcessor(filter)
       
-      // إثراء البيانات بحساب المسافات الزمنية
-      const enrichedActive = active.map(customer => ({
-        ...customer,
-        invoiceGaps: processor.calculateInvoiceGaps(customer.invoices)
-      }))
-      
-      const enrichedInactive = inactive.map(customer => ({
-        ...customer,
-        invoiceGaps: processor.calculateInvoiceGaps(customer.invoices)
-      }))
-      
-      setCustomers(enrichedActive)
-      setFilteredCustomers(enrichedActive)
-      setInactiveCustomers(enrichedInactive)
+      // إذا كان هناك فلتر زمني، نقسم إلى نشطين وغير نشطين
+      if (filter.startDate && filter.endDate) {
+        const { active, inactive } = processor.getCustomersByActivity(filter.startDate, filter.endDate)
+        
+        // تطبيق فلتر المنطقة على النتائج
+        let filteredActive = active
+        let filteredInactive = inactive
+        
+        if (filter.governorate || filter.city) {
+          filteredActive = active.filter(customer => {
+            if (filter.governorate && customer.governorate !== filter.governorate) return false
+            if (filter.city && customer.city !== filter.city) return false
+            return true
+          })
+          
+          filteredInactive = inactive.filter(customer => {
+            if (filter.governorate && customer.governorate !== filter.governorate) return false
+            if (filter.city && customer.city !== filter.city) return false
+            return true
+          })
+        }
+        
+        // إثراء البيانات
+        const enrichedActive = filteredActive.map(customer => ({
+          ...customer,
+          invoiceGaps: processor.calculateInvoiceGaps(customer.invoices)
+        }))
+        
+        const enrichedInactive = filteredInactive.map(customer => ({
+          ...customer,
+          invoiceGaps: processor.calculateInvoiceGaps(customer.invoices)
+        }))
+        
+        setCustomers(enrichedActive)
+        setFilteredCustomers(enrichedActive)
+        setInactiveCustomers(enrichedInactive)
+      } else {
+        // فقط فلتر منطقة بدون فلتر زمني
+        const customersData = filteredProcessor.getCustomersAnalysis()
+        const enrichedCustomers = customersData.map(customer => ({
+          ...customer,
+          invoiceGaps: processor.calculateInvoiceGaps(customer.invoices)
+        }))
+        
+        setCustomers(enrichedCustomers)
+        setFilteredCustomers(enrichedCustomers)
+        setInactiveCustomers([])
+      }
     } else {
       // عرض جميع العملاء بدون فلترة
       const customersData = processor.getCustomersAnalysis()
@@ -164,6 +198,7 @@ const Customers = () => {
       {/* Date Range Filter */}
       <DateRangeFilter
         onFilterChange={setDateFilter}
+        dataProcessor={dataProcessor}
         className="animate-fadeIn"
       />
 
