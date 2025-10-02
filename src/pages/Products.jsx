@@ -1,9 +1,22 @@
 import { useState, useEffect } from 'react'
 import { Search, SortAsc, SortDesc, X, TrendingUp, Users, ShoppingCart, Percent, Package2 } from 'lucide-react'
 import { loadFromLocalStorage, DataProcessor } from '../utils/dataProcessor'
+import { loadProductClassifier } from '../utils/productClassifier'
 import { formatNumber, formatCurrency, formatPercentage, formatDate } from '../utils/formatters'
 import Modal, { ModalContent, StatsGrid, DataTable } from '../components/Modal'
 import DateRangeFilter from '../components/DateRangeFilter'
+import CategoryIndicators from '../components/CategoryIndicators'
+
+// CSS لإخفاء شريط التمرير
+const scrollbarHideStyle = `
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+`
 
 const Products = () => {
   const [activeTab, setActiveTab] = useState('products') // 'products', 'products-inactive', or 'bundles'
@@ -19,12 +32,17 @@ const Products = () => {
   const [selectedBundle, setSelectedBundle] = useState(null)
   const [dateFilter, setDateFilter] = useState(null)
   const [dataProcessor, setDataProcessor] = useState(null)
+  const [classifierMap, setClassifierMap] = useState(null)
 
   useEffect(() => {
     const initData = async () => {
       const data = await loadFromLocalStorage()
       if (data) {
-        const processor = new DataProcessor(data)
+        // تحميل مصنف المنتجات
+        const classifier = await loadProductClassifier().catch(() => null)
+        setClassifierMap(classifier)
+        
+        const processor = new DataProcessor(data, { productClassifier: classifier })
         setDataProcessor(processor)
         loadProductsData(processor, null)
       }
@@ -160,7 +178,9 @@ const Products = () => {
       : <SortDesc className="w-4 h-4" />
   }
   return (
-    <div className="space-y-6">
+    <>
+      <style dangerouslySetInnerHTML={{ __html: scrollbarHideStyle }} />
+      <div className="space-y-6 overflow-x-hidden">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">المنتجات</h1>
@@ -174,64 +194,154 @@ const Products = () => {
         className="animate-fadeIn"
       />
 
+      {/* Category Indicators */}
+      {dataProcessor && classifierMap && (
+        (activeTab === 'products' && filteredProducts.length > 0) ||
+        (activeTab === 'products-inactive' && filteredInactiveProducts.length > 0) ||
+        (activeTab === 'bundles' && filteredProducts.length > 0)
+      ) && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft hover:shadow-medium border border-gray-200 dark:border-gray-700 transition-all duration-300 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Package2 className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+              توزيع التصنيفات الوظيفية
+              {activeTab === 'products-inactive' && ' (غير النشطة)'}
+              {activeTab === 'bundles' && ' (المنتجات المشتراة معاً)'}
+            </h3>
+            <span className="text-sm text-gray-500 dark:text-gray-400">
+              ({formatNumber(
+                activeTab === 'products' ? filteredProducts.length :
+                activeTab === 'products-inactive' ? filteredInactiveProducts.length :
+                filteredProducts.length
+              )} منتج
+              {searchTerm && ' من ' + formatNumber(
+                activeTab === 'products' ? products.length :
+                activeTab === 'products-inactive' ? inactiveProducts.length :
+                products.length
+              )}
+              )
+            </span>
+            {(dateFilter || searchTerm) && (
+              <span className="text-sm font-normal text-blue-600 dark:text-blue-400">
+                (
+                {dateFilter && dateFilter.startDate && dateFilter.endDate && 'فلتر زمني'}
+                {dateFilter && dateFilter.governorate && (dateFilter.startDate ? ' + ' : '') + 'فلتر جغرافي'}
+                {dateFilter && dateFilter.city && !dateFilter.governorate && 'فلتر مدينة'}
+                {searchTerm && (dateFilter ? ' + ' : '') + 'بحث'}
+                )
+              </span>
+            )}
+          </div>
+          <CategoryIndicators
+            products={(() => {
+              // استخدام البيانات المفلترة بالبحث والترتيب
+              if (activeTab === 'products') {
+                return filteredProducts; // البيانات النشطة المفلترة
+              } else if (activeTab === 'products-inactive') {
+                return filteredInactiveProducts; // البيانات غير النشطة المفلترة
+              } else if (activeTab === 'bundles') {
+                // للمنتجات المشتراة معاً، نستخدم جميع المنتجات النشطة
+                return filteredProducts;
+              }
+              return [];
+            })()}
+            totalSales={(() => {
+              if (activeTab === 'products') {
+                return filteredProducts.reduce((sum, p) => sum + p.totalSales, 0);
+              } else if (activeTab === 'products-inactive') {
+                return filteredInactiveProducts.reduce((sum, p) => sum + p.totalSales, 0);
+              } else if (activeTab === 'bundles') {
+                return filteredProducts.reduce((sum, p) => sum + p.totalSales, 0);
+              }
+              return 0;
+            })()}
+            mode="percentage"
+            layout="grid"
+            size="medium"
+            showLabels={true}
+            showValues={true}
+          />
+        </div>
+      )}
+
       {/* Tabs and Search */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft hover:shadow-medium border border-gray-200 dark:border-gray-700 transition-all duration-300">
-        <div className="flex border-b border-gray-200 dark:border-gray-700">
-          <button
-            onClick={() => setActiveTab('products')}
-            className={`flex-1 py-4 px-6 text-sm font-medium transition-colors ${
-              activeTab === 'products'
-                ? 'text-green-600 dark:text-green-400 border-b-2 border-green-600 dark:border-green-400 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20'
-                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-            }`}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <TrendingUp className="w-4 h-4" />
-              <span>{dateFilter ? 'المنتجات النشطة' : 'جميع المنتجات'}</span>
-              <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                activeTab === 'products' 
-                  ? 'bg-green-600 dark:bg-green-500 text-white' 
-                  : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
-              }`}>
-                {formatNumber(filteredProducts.length)}
-              </span>
-            </div>
-          </button>
-          {dateFilter && inactiveProducts.length > 0 && (
+        <div className="border-b border-gray-200 dark:border-gray-700">
+          {/* التبويبات - تخطيط مرن */}
+          <div className="flex overflow-x-auto scrollbar-hide">
             <button
-              onClick={() => setActiveTab('products-inactive')}
-              className={`flex-1 py-4 px-6 text-sm font-medium transition-colors ${
-                activeTab === 'products-inactive'
-                  ? 'text-orange-600 dark:text-orange-400 border-b-2 border-orange-600 dark:border-orange-400 bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20'
+              onClick={() => setActiveTab('products')}
+              className={`flex-1 min-w-0 py-3 px-2 sm:px-4 text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
+                activeTab === 'products'
+                  ? 'text-green-600 dark:text-green-400 border-b-2 border-green-600 dark:border-green-400 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20'
                   : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
               }`}
             >
-              <div className="flex items-center justify-center gap-2">
-                <Package2 className="w-4 h-4" />
-                <span>بدون نشاط</span>
-                <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                  activeTab === 'products-inactive' 
-                    ? 'bg-orange-600 dark:bg-orange-500 text-white' 
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
+                <div className="flex items-center gap-1">
+                  <TrendingUp className="w-3 h-3 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">{dateFilter ? 'النشطة' : 'جميع المنتجات'}</span>
+                  <span className="sm:hidden">نشطة</span>
+                </div>
+                <span className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-full text-xs font-bold ${
+                  activeTab === 'products' 
+                    ? 'bg-green-600 dark:bg-green-500 text-white' 
                     : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
                 }`}>
-                  {formatNumber(filteredInactiveProducts.length)}
+                  {formatNumber(filteredProducts.length)}
                 </span>
               </div>
             </button>
-          )}
-          <button
-            onClick={() => setActiveTab('bundles')}
-            className={`flex-1 py-4 px-6 text-sm font-medium transition-colors ${
-              activeTab === 'bundles'
-                ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400 bg-purple-50 dark:bg-purple-900/20'
-                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-            }`}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <ShoppingCart className="w-4 h-4" />
-              <span>منتجات تُشترى معاً ({formatNumber(bundles.length)})</span>
-            </div>
-          </button>
+            
+            {dateFilter && inactiveProducts.length > 0 && (
+              <button
+                onClick={() => setActiveTab('products-inactive')}
+                className={`flex-1 min-w-0 py-3 px-2 sm:px-4 text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
+                  activeTab === 'products-inactive'
+                    ? 'text-orange-600 dark:text-orange-400 border-b-2 border-orange-600 dark:border-orange-400 bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
+                  <div className="flex items-center gap-1">
+                    <Package2 className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span>غير نشطة</span>
+                  </div>
+                  <span className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-full text-xs font-bold ${
+                    activeTab === 'products-inactive' 
+                      ? 'bg-orange-600 dark:bg-orange-500 text-white' 
+                      : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                  }`}>
+                    {formatNumber(filteredInactiveProducts.length)}
+                  </span>
+                </div>
+              </button>
+            )}
+            
+            <button
+              onClick={() => setActiveTab('bundles')}
+              className={`flex-1 min-w-0 py-3 px-2 sm:px-4 text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
+                activeTab === 'bundles'
+                  ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400 bg-purple-50 dark:bg-purple-900/20'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+              }`}
+            >
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
+                <div className="flex items-center gap-1">
+                  <ShoppingCart className="w-3 h-3 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">مشتراة معاً</span>
+                  <span className="sm:hidden">معاً</span>
+                </div>
+                <span className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-full text-xs font-bold ${
+                  activeTab === 'bundles' 
+                    ? 'bg-purple-600 dark:bg-purple-500 text-white' 
+                    : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                }`}>
+                  {formatNumber(bundles.length)}
+                </span>
+              </div>
+            </button>
+          </div>
         </div>
 
         {/* Search */}
@@ -303,7 +413,8 @@ const Products = () => {
           onClose={() => setSelectedBundle(null)}
         />
       )}
-    </div>
+      </div>
+    </>
   )
 }
 
@@ -332,6 +443,15 @@ const ProductsTable = ({ products, sortConfig, onSort, onProductClick, SortIcon,
               <div className="flex items-center gap-2">
                 <span>الفئة</span>
                 <SortIcon columnKey="category" />
+              </div>
+            </th>
+            <th
+              onClick={() => onSort('functionShort')}
+              className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 group"
+            >
+              <div className="flex items-center gap-2">
+                <span>التصنيف الوظيفي</span>
+                <SortIcon columnKey="functionShort" />
               </div>
             </th>
             <th
@@ -391,6 +511,15 @@ const ProductsTable = ({ products, sortConfig, onSort, onProductClick, SortIcon,
               </td>
               <td className="px-6 py-4 text-sm text-gray-600 dark:text-gray-400">
                 {product.category}
+              </td>
+              <td className="px-6 py-4">
+                {product.functionShort ? (
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200">
+                    {product.functionShort}
+                  </span>
+                ) : (
+                  <span className="text-xs text-gray-400 dark:text-gray-500">غير محدد</span>
+                )}
               </td>
               <td className="px-6 py-4 text-sm font-semibold text-gray-900 dark:text-gray-100">
                 {formatCurrency(product.totalSales)}
@@ -538,25 +667,50 @@ const ProductDetailsModal = ({ product, onClose }) => {
       headerColor="green"
     >
       <ModalContent>
-        {/* Stats Grid */}
-        <StatsGrid stats={stats} columns={4} />
+        {/* Stats Grid - Responsive */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          {stats.map((stat, index) => (
+            <div key={index} className={`${stat.bgColor} p-3 rounded-lg`}>
+              <div className="flex items-center gap-2">
+                <stat.icon className={`w-4 h-4 ${stat.iconColor} flex-shrink-0`} />
+                <div className="min-w-0">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 truncate">{stat.label}</p>
+                  <p className={`text-sm font-bold ${stat.valueColor} truncate`}>{stat.value}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
 
-        {/* Price Info */}
-        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 mb-6">
-          <div className="grid grid-cols-2 gap-4">
+        {/* Product Info - Responsive */}
+        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 sm:p-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
             <div>
               <span className="text-gray-600 dark:text-gray-400 text-sm">السعر المسجل:</span>
-              <span className="font-semibold text-gray-900 dark:text-gray-100 mr-2">
+              <span className="font-semibold text-gray-900 dark:text-gray-100 mr-2 block sm:inline">
                 {formatCurrency(product.price)}
               </span>
             </div>
             <div>
               <span className="text-gray-600 dark:text-gray-400 text-sm">متوسط سعر البيع:</span>
-              <span className="font-semibold text-gray-900 dark:text-gray-100 mr-2">
+              <span className="font-semibold text-gray-900 dark:text-gray-100 mr-2 block sm:inline">
                 {formatCurrency(product.avgPrice)}
               </span>
             </div>
           </div>
+          {product.functionShort && (
+            <div className="pt-3 border-t border-gray-200 dark:border-gray-600">
+              <span className="text-gray-600 dark:text-gray-400 text-sm block sm:inline">التصنيف الوظيفي:</span>
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 mt-1 sm:mt-0 sm:mr-2">
+                {product.functionShort}
+              </span>
+              {product.functionCategory && product.functionCategory !== product.functionShort && (
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {product.functionCategory}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Sales Timeline */}

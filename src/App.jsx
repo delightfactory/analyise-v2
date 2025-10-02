@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Customers from './pages/Customers'
 import Products from './pages/Products'
+import Regions from './pages/Regions'
 import Upload from './pages/Upload'
 import { loadFromLocalStorage } from './utils/dataProcessor'
 
@@ -31,6 +32,7 @@ function App() {
             <Route index element={<Dashboard />} />
             <Route path="customers" element={<Customers />} />
             <Route path="products" element={<Products />} />
+            <Route path="regions" element={<Regions />} />
             <Route path="upload" element={<Upload onDataLoaded={() => setHasData(true)} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

@@ -3,8 +3,9 @@
  */
 
 export class DataProcessor {
-  constructor(rawData) {
+  constructor(rawData, options = {}) {
     this.rawData = rawData || [];
+    this.productClassifier = options.productClassifier || null;
   }
 
   /**
@@ -28,7 +29,26 @@ export class DataProcessor {
    */
   getFilteredProcessor(startDate, endDate) {
     const filteredData = this.filterByDateRange(startDate, endDate);
-    return new DataProcessor(filteredData);
+    return new DataProcessor(filteredData, { productClassifier: this.productClassifier });
+  }
+
+  /**
+   * الحصول على تصنيف وظيفة المنتج عبر الكود (إن وجد)
+   */
+  getProductFunctionInfo(code) {
+    try {
+      if (!this.productClassifier) return null;
+      const key = String(code ?? '').trim();
+      if (!key) return null;
+      const info = this.productClassifier.get(key);
+      if (!info) return null;
+      return {
+        functionCategory: info.functionCategory || null,
+        functionShort: info.functionShort || null
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -123,10 +143,13 @@ export class DataProcessor {
       totalSales += itemTotal;
 
       if (!productMap.has(code)) {
+        const fn = this.getProductFunctionInfo(code);
         productMap.set(code, {
           code: code,
           name: record.product_name,
           category: record.product_category,
+          functionCategory: fn?.functionCategory || null,
+          functionShort: fn?.functionShort || null,
           price: parseFloat(record.product_price) || 0,
           totalSales: 0,
           totalQuantity: 0,
@@ -439,7 +462,413 @@ export class DataProcessor {
       filteredData = filteredData.filter(record => record.city === city);
     }
     
-    return new DataProcessor(filteredData);
+    return new DataProcessor(filteredData, { productClassifier: this.productClassifier });
+  }
+
+  /**
+   * تحليل المناطق - إحصائيات المحافظات
+   */
+  getGovernoratesAnalysis() {
+    const governorateMap = new Map();
+
+    this.rawData.forEach(record => {
+      const gov = record.governorate;
+      if (!gov) return;
+
+      if (!governorateMap.has(gov)) {
+        governorateMap.set(gov, {
+          name: gov,
+          totalSales: 0,
+          customerCount: new Set(),
+          cityCount: new Set(),
+          productCount: new Set(),
+          invoiceCount: new Set(),
+          cities: new Map()
+        });
+      }
+
+      const govData = governorateMap.get(gov);
+      govData.totalSales += parseFloat(record.item_total) || 0;
+      govData.customerCount.add(record.customer_code);
+      govData.cityCount.add(record.city);
+      govData.productCount.add(record.product_code);
+      govData.invoiceCount.add(record.invoice_number);
+
+      // تفاصيل المدن
+      const city = record.city;
+      if (city && !govData.cities.has(city)) {
+        govData.cities.set(city, {
+          name: city,
+          totalSales: 0,
+          customerCount: new Set(),
+          productCount: new Set(),
+          invoiceCount: new Set()
+        });
+      }
+
+      if (city) {
+        const cityData = govData.cities.get(city);
+        cityData.totalSales += parseFloat(record.item_total) || 0;
+        cityData.customerCount.add(record.customer_code);
+        cityData.productCount.add(record.product_code);
+        cityData.invoiceCount.add(record.invoice_number);
+      }
+    });
+
+    // تحويل إلى مصفوفة مع معالجة المدن
+    const governorates = Array.from(governorateMap.values()).map(gov => ({
+      name: gov.name,
+      totalSales: gov.totalSales,
+      customerCount: gov.customerCount.size,
+      cityCount: gov.cityCount.size,
+      productCount: gov.productCount.size,
+      invoiceCount: gov.invoiceCount.size,
+      cities: Array.from(gov.cities.values()).map(city => ({
+        name: city.name,
+        totalSales: city.totalSales,
+        customerCount: city.customerCount.size,
+        productCount: city.productCount.size,
+        invoiceCount: city.invoiceCount.size
+      })).sort((a, b) => b.totalSales - a.totalSales)
+    }));
+
+    return governorates.sort((a, b) => b.totalSales - a.totalSales);
+  }
+
+  /**
+   * تحليل مدينة معينة
+   */
+  getCityAnalysis(governorate, city) {
+    const cityData = this.rawData.filter(record => 
+      record.governorate === governorate && record.city === city
+    );
+
+    if (cityData.length === 0) return null;
+
+    const customers = new Set();
+    const products = new Set();
+    const invoices = new Set();
+    let totalSales = 0;
+
+    cityData.forEach(record => {
+      customers.add(record.customer_code);
+      products.add(record.product_code);
+      invoices.add(record.invoice_number);
+      totalSales += parseFloat(record.item_total) || 0;
+    });
+
+    return {
+      name: city,
+      governorate: governorate,
+      totalSales,
+      customerCount: customers.size,
+      productCount: products.size,
+      invoiceCount: invoices.size,
+      recordCount: cityData.length
+    };
+  }
+
+  /**
+   * الحصول على تفاصيل المنتجات في مدينة معينة مع دعم النشطة وغير النشطة
+   */
+  getCityProductsAnalysis(governorate, city, filters = null) {
+    // الحصول على جميع المنتجات في المدينة (بدون فلاتر زمنية)
+    const allCityData = this.rawData.filter(record => 
+      record.governorate === governorate && record.city === city
+    );
+
+    if (allCityData.length === 0) return { active: [], inactive: [], totalSales: 0 };
+
+    // الحصول على البيانات المفلترة إذا كانت الفلاتر مطبقة
+    let filteredCityData = allCityData;
+    if (filters && (filters.startDate || filters.endDate)) {
+      const filteredProcessor = this.getCompleteFilteredProcessor(filters);
+      filteredCityData = filteredProcessor.rawData.filter(record => 
+        record.governorate === governorate && record.city === city
+      );
+    }
+
+    // حساب إجمالي مبيعات المدينة (من البيانات المفلترة)
+    const totalCitySales = filteredCityData.reduce((sum, record) => 
+      sum + (parseFloat(record.item_total) || 0), 0
+    );
+
+    // تجميع جميع المنتجات مع بياناتها التاريخية الكاملة
+    const allProductsMap = new Map();
+    allCityData.forEach(record => {
+      const code = record.product_code;
+      if (!allProductsMap.has(code)) {
+        const fn = this.getProductFunctionInfo(code);
+        allProductsMap.set(code, {
+          code: code,
+          name: record.product_name,
+          category: record.product_category,
+          functionCategory: fn?.functionCategory || null,
+          functionShort: fn?.functionShort || null,
+          totalSales: 0,
+          totalQuantity: 0,
+          customerCount: new Set(),
+          invoiceCount: new Set()
+        });
+      }
+
+      const product = allProductsMap.get(code);
+      product.totalSales += parseFloat(record.item_total) || 0;
+      product.totalQuantity += parseFloat(record.quantity) || 0;
+      product.customerCount.add(record.customer_code);
+      product.invoiceCount.add(record.invoice_number);
+    });
+
+    // تجميع المنتجات النشطة (من البيانات المفلترة)
+    const activeProductsMap = new Map();
+    filteredCityData.forEach(record => {
+      const code = record.product_code;
+      if (!activeProductsMap.has(code)) {
+        const fn = this.getProductFunctionInfo(code);
+        activeProductsMap.set(code, {
+          code: code,
+          name: record.product_name,
+          category: record.product_category,
+          functionCategory: fn?.functionCategory || null,
+          functionShort: fn?.functionShort || null,
+          totalSales: 0,
+          totalQuantity: 0,
+          customerCount: new Set(),
+          invoiceCount: new Set()
+        });
+      }
+
+      const product = activeProductsMap.get(code);
+      product.totalSales += parseFloat(record.item_total) || 0;
+      product.totalQuantity += parseFloat(record.quantity) || 0;
+      product.customerCount.add(record.customer_code);
+      product.invoiceCount.add(record.invoice_number);
+    });
+
+    // تحويل المنتجات النشطة إلى مصفوفة
+    const activeProducts = Array.from(activeProductsMap.values()).map(product => ({
+      ...product,
+      customerCount: product.customerCount.size,
+      invoiceCount: product.invoiceCount.size,
+      salesPercentage: totalCitySales > 0 ? (product.totalSales / totalCitySales) * 100 : 0,
+      avgPrice: product.totalQuantity > 0 ? product.totalSales / product.totalQuantity : 0
+    })).sort((a, b) => b.totalSales - a.totalSales);
+
+    // تحديد المنتجات غير النشطة مع الاحتفاظ ببياناتها التاريخية
+    const activeProductCodes = new Set(activeProductsMap.keys());
+    const inactiveProducts = Array.from(allProductsMap.values())
+      .filter(product => !activeProductCodes.has(product.code))
+      .map(product => ({
+        ...product,
+        customerCount: product.customerCount.size,
+        invoiceCount: product.invoiceCount.size,
+        salesPercentage: 0, // نسبة من المبيعات المفلترة = 0
+        avgPrice: product.totalQuantity > 0 ? product.totalSales / product.totalQuantity : 0,
+        // الاحتفاظ بالبيانات التاريخية الكاملة
+        historicalSales: product.totalSales,
+        historicalQuantity: product.totalQuantity
+      }))
+      .sort((a, b) => b.totalSales - a.totalSales);
+
+    return {
+      active: activeProducts,
+      inactive: inactiveProducts,
+      totalSales: totalCitySales
+    };
+  }
+
+  /**
+   * الحصول على تفاصيل العملاء في مدينة معينة مع دعم النشطين وغير النشطين
+   */
+  getCityCustomersAnalysis(governorate, city, filters = null) {
+    // الحصول على جميع العملاء في المدينة (بدون فلاتر زمنية)
+    const allCityData = this.rawData.filter(record => 
+      record.governorate === governorate && record.city === city
+    );
+
+    if (allCityData.length === 0) return { active: [], inactive: [], totalSales: 0 };
+
+    // الحصول على البيانات المفلترة إذا كانت الفلاتر مطبقة
+    let filteredCityData = allCityData;
+    if (filters && (filters.startDate || filters.endDate)) {
+      const filteredProcessor = this.getCompleteFilteredProcessor(filters);
+      filteredCityData = filteredProcessor.rawData.filter(record => 
+        record.governorate === governorate && record.city === city
+      );
+    }
+
+    // حساب إجمالي مبيعات المدينة (من البيانات المفلترة)
+    const totalCitySales = filteredCityData.reduce((sum, record) => 
+      sum + (parseFloat(record.item_total) || 0), 0
+    );
+
+    // تجميع جميع العملاء
+    const allCustomersMap = new Map();
+    allCityData.forEach(record => {
+      const code = record.customer_code;
+      if (!allCustomersMap.has(code)) {
+        allCustomersMap.set(code, {
+          code: code,
+          name: record.customer_name,
+          city: record.city,
+          governorate: record.governorate,
+          totalSales: 0,
+          productCount: new Set(),
+          invoiceCount: new Set(),
+          lastPurchaseDate: null
+        });
+      }
+
+      const customer = allCustomersMap.get(code);
+      const itemTotal = parseFloat(record.item_total) || 0;
+      customer.totalSales += itemTotal;
+      customer.productCount.add(record.product_code);
+      customer.invoiceCount.add(record.invoice_number);
+      
+      if (!customer.lastPurchaseDate || record.invoice_date > customer.lastPurchaseDate) {
+        customer.lastPurchaseDate = record.invoice_date;
+      }
+    });
+
+    // تجميع العملاء النشطين (من البيانات المفلترة)
+    const activeCustomersMap = new Map();
+    filteredCityData.forEach(record => {
+      const code = record.customer_code;
+      if (!activeCustomersMap.has(code)) {
+        activeCustomersMap.set(code, {
+          code: code,
+          name: record.customer_name,
+          city: record.city,
+          governorate: record.governorate,
+          totalSales: 0,
+          productCount: new Set(),
+          invoiceCount: new Set(),
+          lastPurchaseDate: null
+        });
+      }
+
+      const customer = activeCustomersMap.get(code);
+      customer.totalSales += parseFloat(record.item_total) || 0;
+      customer.productCount.add(record.product_code);
+      customer.invoiceCount.add(record.invoice_number);
+      
+      if (!customer.lastPurchaseDate || record.invoice_date > customer.lastPurchaseDate) {
+        customer.lastPurchaseDate = record.invoice_date;
+      }
+    });
+
+    // تحويل العملاء النشطين إلى مصفوفة
+    const activeCustomers = Array.from(activeCustomersMap.values()).map(customer => ({
+      ...customer,
+      productCount: customer.productCount.size,
+      invoiceCount: customer.invoiceCount.size,
+      salesPercentage: totalCitySales > 0 ? (customer.totalSales / totalCitySales) * 100 : 0,
+      avgOrderValue: customer.invoiceCount.size > 0 ? customer.totalSales / customer.invoiceCount.size : 0
+    })).sort((a, b) => b.totalSales - a.totalSales);
+
+    // تحديد العملاء غير النشطين
+    const activeCustomerCodes = new Set(activeCustomersMap.keys());
+    const inactiveCustomers = Array.from(allCustomersMap.values())
+      .filter(customer => !activeCustomerCodes.has(customer.code))
+      .map(customer => ({
+        ...customer,
+        productCount: customer.productCount.size,
+        invoiceCount: customer.invoiceCount.size,
+        salesPercentage: 0,
+        avgOrderValue: customer.invoiceCount.size > 0 ? customer.totalSales / customer.invoiceCount.size : 0,
+        // إبقاء البيانات التاريخية للعملاء غير النشطين
+        filteredSales: 0 // مبيعات الفترة المفلترة = 0
+      }))
+      .sort((a, b) => b.totalSales - a.totalSales);
+
+    return {
+      active: activeCustomers,
+      inactive: inactiveCustomers,
+      totalSales: totalCitySales
+    };
+  }
+
+  /**
+   * تحليل تفضيلات التصنيفات للعملاء
+   */
+  getCustomerCategoryPreferences(customerCode = null) {
+    let targetData = this.rawData;
+    
+    // إذا تم تحديد عميل معين، فلتر البيانات له فقط
+    if (customerCode) {
+      targetData = this.rawData.filter(record => record.customer_code === customerCode);
+    }
+
+    const categoryStats = new Map();
+    let totalSpent = 0;
+
+    targetData.forEach(record => {
+      const fn = this.getProductFunctionInfo(record.product_code);
+      const category = fn?.functionShort || record.product_category || 'غير محدد';
+      const itemTotal = parseFloat(record.item_total) || 0;
+      
+      totalSpent += itemTotal;
+
+      if (!categoryStats.has(category)) {
+        categoryStats.set(category, {
+          category,
+          totalSpent: 0,
+          quantity: 0,
+          productCount: new Set(),
+          invoiceCount: new Set()
+        });
+      }
+
+      const stats = categoryStats.get(category);
+      stats.totalSpent += itemTotal;
+      stats.quantity += parseFloat(record.quantity) || 0;
+      stats.productCount.add(record.product_code);
+      stats.invoiceCount.add(record.invoice_number);
+    });
+
+    // تحويل إلى مصفوفة مع حساب النسب المئوية
+    const preferences = Array.from(categoryStats.values()).map(stat => ({
+      ...stat,
+      productCount: stat.productCount.size,
+      invoiceCount: stat.invoiceCount.size,
+      percentage: totalSpent > 0 ? (stat.totalSpent / totalSpent) * 100 : 0,
+      avgSpentPerProduct: stat.productCount.size > 0 ? stat.totalSpent / stat.productCount.size : 0
+    }));
+
+    // ترتيب حسب المبلغ المنفق
+    return preferences.sort((a, b) => b.totalSpent - a.totalSpent);
+  }
+
+  /**
+   * الحصول على أفضل التصنيفات للعملاء (إجمالي)
+   */
+  getTopCategoriesByCustomers() {
+    const categoryCustomers = new Map();
+
+    this.rawData.forEach(record => {
+      const fn = this.getProductFunctionInfo(record.product_code);
+      const category = fn?.functionShort || record.product_category || 'غير محدد';
+      
+      if (!categoryCustomers.has(category)) {
+        categoryCustomers.set(category, {
+          category,
+          customers: new Set(),
+          totalSales: 0,
+          totalQuantity: 0
+        });
+      }
+
+      const stats = categoryCustomers.get(category);
+      stats.customers.add(record.customer_code);
+      stats.totalSales += parseFloat(record.item_total) || 0;
+      stats.totalQuantity += parseFloat(record.quantity) || 0;
+    });
+
+    return Array.from(categoryCustomers.values()).map(stat => ({
+      ...stat,
+      customerCount: stat.customers.size,
+      avgSalesPerCustomer: stat.customers.size > 0 ? stat.totalSales / stat.customers.size : 0
+    })).sort((a, b) => b.customerCount - a.customerCount);
   }
 }
 

@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Search, SortAsc, SortDesc, TrendingUp, ShoppingCart, Package, Calendar, MapPin } from 'lucide-react'
 import { loadFromLocalStorage, DataProcessor } from '../utils/dataProcessor'
+import { loadProductClassifier } from '../utils/productClassifier'
 import { formatNumber, formatCurrency, formatDate, formatDuration } from '../utils/formatters'
 import Modal, { ModalContent, StatsGrid, DataTable } from '../components/Modal'
 import DateRangeFilter from '../components/DateRangeFilter'
+import CategoryIndicators from '../components/CategoryIndicators'
 
 const Customers = () => {
   const [customers, setCustomers] = useState([])
@@ -15,6 +17,7 @@ const Customers = () => {
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [dateFilter, setDateFilter] = useState(null)
   const [dataProcessor, setDataProcessor] = useState(null)
+  const [classifierMap, setClassifierMap] = useState(null)
   const [activeTab, setActiveTab] = useState('active') // 'active' or 'inactive'
 
   // تحميل البيانات الأولية
@@ -22,7 +25,11 @@ const Customers = () => {
     const initData = async () => {
       const data = await loadFromLocalStorage()
       if (data) {
-        const processor = new DataProcessor(data)
+        // تحميل مصنف المنتجات
+        const classifier = await loadProductClassifier().catch(() => null)
+        setClassifierMap(classifier)
+        
+        const processor = new DataProcessor(data, { productClassifier: classifier })
         setDataProcessor(processor)
         loadCustomers(processor, null)
       }
@@ -202,6 +209,47 @@ const Customers = () => {
         className="animate-fadeIn"
       />
 
+      {/* Customer Category Preferences */}
+      {dataProcessor && classifierMap && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft hover:shadow-medium border border-gray-200 dark:border-gray-700 transition-all duration-300 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Package className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+              تفضيلات العملاء للتصنيفات
+            </h3>
+            {dateFilter && (
+              <span className="text-sm font-normal text-blue-600 dark:text-blue-400">
+                (مفلتر)
+              </span>
+            )}
+          </div>
+          <CategoryIndicators
+            products={(() => {
+              // استخدام المعالج المفلتر إذا كانت هناك فلاتر مطبقة
+              const processor = dateFilter ? 
+                dataProcessor.getCompleteFilteredProcessor(dateFilter) : 
+                dataProcessor;
+              const preferences = processor.getCustomerCategoryPreferences();
+              return preferences.map(pref => ({
+                functionShort: pref.category,
+                totalSales: pref.totalSpent
+              }));
+            })()}
+            totalSales={(() => {
+              const processor = dateFilter ? 
+                dataProcessor.getCompleteFilteredProcessor(dateFilter) : 
+                dataProcessor;
+              return processor.getCustomerCategoryPreferences().reduce((sum, pref) => sum + pref.totalSpent, 0);
+            })()}
+            mode="percentage"
+            layout="grid"
+            size="medium"
+            showLabels={true}
+            showValues={true}
+          />
+        </div>
+      )}
+
       {/* Search and Stats */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-soft hover:shadow-medium p-6 border border-gray-200 dark:border-gray-700 transition-all duration-300">
         <div className="flex items-center gap-4 mb-4">
@@ -373,6 +421,8 @@ const Customers = () => {
       {selectedCustomer && (
         <CustomerDetailsModal
           customer={selectedCustomer}
+          dataProcessor={dataProcessor}
+          classifierMap={classifierMap}
           onClose={() => setSelectedCustomer(null)}
         />
       )}
@@ -381,7 +431,62 @@ const Customers = () => {
 }
 
 // Modal لعرض تفاصيل العميل
-const CustomerDetailsModal = ({ customer, onClose }) => {
+const CustomerDetailsModal = ({ customer, dataProcessor, classifierMap, onClose }) => {
+  const [expandedInvoices, setExpandedInvoices] = useState(new Set())
+
+  // دالة لتوسيع/طي الفاتورة
+  const toggleInvoice = (invoiceNumber) => {
+    const newExpanded = new Set(expandedInvoices)
+    if (newExpanded.has(invoiceNumber)) {
+      newExpanded.delete(invoiceNumber)
+    } else {
+      newExpanded.add(invoiceNumber)
+    }
+    setExpandedInvoices(newExpanded)
+  }
+
+  // دالة لحساب مؤشرات التصنيف لفاتورة معينة
+  const getInvoiceCategories = (invoiceNumber) => {
+    if (!dataProcessor || !classifierMap) return []
+    
+    // البحث عن جميع الأصناف في هذه الفاتورة
+    const invoiceItems = dataProcessor.rawData.filter(record => 
+      record.invoice_number === invoiceNumber && record.customer_code === customer.code
+    )
+    
+    const categoryStats = new Map()
+    let totalInvoiceAmount = 0
+
+    invoiceItems.forEach(item => {
+      const fn = dataProcessor.getProductFunctionInfo(item.product_code)
+      const category = fn?.functionShort || item.product_category || 'غير محدد'
+      const itemTotal = parseFloat(item.item_total) || 0
+      
+      totalInvoiceAmount += itemTotal
+      
+      if (!categoryStats.has(category)) {
+        categoryStats.set(category, { category, totalSpent: 0, items: [] })
+      }
+      
+      const stats = categoryStats.get(category)
+      stats.totalSpent += itemTotal
+      stats.items.push({
+        name: item.product_name,
+        code: item.product_code,
+        quantity: parseFloat(item.quantity) || 0,
+        total: itemTotal
+      })
+    })
+
+    return {
+      categories: Array.from(categoryStats.values()).map(stat => ({
+        ...stat,
+        percentage: totalInvoiceAmount > 0 ? (stat.totalSpent / totalInvoiceAmount) * 100 : 0
+      })).sort((a, b) => b.totalSpent - a.totalSpent),
+      totalAmount: totalInvoiceAmount,
+      itemsCount: invoiceItems.length
+    }
+  }
   // إعداد بيانات الإحصائيات
   const stats = [
     {
@@ -442,87 +547,222 @@ const CustomerDetailsModal = ({ customer, onClose }) => {
       isOpen={true}
       onClose={onClose}
       title={customer.name}
-      subtitle={`كود العميل: ${customer.code}`}
+      subtitle={`${customer.city} - ${customer.governorate} | كود: ${customer.code}`}
       size="xl"
       headerColor="blue"
     >
       <ModalContent>
-        {/* Stats Grid */}
-        <StatsGrid stats={stats} columns={4} />
+        {/* Compact Stats Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+          {stats.map((stat, index) => (
+            <div key={index} className={`${stat.bgColor} p-3 rounded-lg`}>
+              <div className="flex items-center gap-2">
+                <stat.icon className={`w-4 h-4 ${stat.iconColor} flex-shrink-0`} />
+                <div className="min-w-0">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 truncate">{stat.label}</p>
+                  <p className={`text-sm font-bold ${stat.valueColor} truncate`}>{stat.value}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
 
-        {/* Location Info */}
-        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 mb-6 flex items-center gap-3">
-          <MapPin className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-          <div>
-            <span className="font-medium text-gray-900 dark:text-gray-100">{customer.city}</span>
-            <span className="text-gray-600 dark:text-gray-400"> - {customer.governorate}</span>
+        {/* Customer Category Preferences - Moved to top */}
+        {dataProcessor && classifierMap && (
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">تفضيلات التصنيفات</h3>
+            <div className="bg-gray-50 dark:bg-gray-700/30 p-3 sm:p-4 rounded-lg">
+              <CategoryIndicators
+                products={(() => {
+                  const preferences = dataProcessor.getCustomerCategoryPreferences(customer.code);
+                  return preferences.map(pref => ({
+                    functionShort: pref.category,
+                    totalSales: pref.totalSpent
+                  }));
+                })()}
+                totalSales={(() => {
+                  const preferences = dataProcessor.getCustomerCategoryPreferences(customer.code);
+                  return preferences.reduce((sum, pref) => sum + pref.totalSpent, 0);
+                })()}
+                mode="percentage"
+                layout="horizontal"
+                size="small"
+                showLabels={false}
+                showValues={true}
+              />
+              <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                توزيع مشتريات العميل حسب التصنيف الوظيفي
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Products Table - Compact */}
+        <div className="mb-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">
+            الأصناف المشتراة ({formatNumber((customer.products || []).length)} صنف)
+          </h3>
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+            <div className="max-h-48 overflow-y-auto">
+              <div className="grid gap-2 p-3">
+                {(customer.products || []).map((product, index) => (
+                  <div key={product.code} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700/30 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="flex items-center justify-center w-6 h-6 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full text-xs font-bold flex-shrink-0">
+                        {index + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                          {product.name}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          {product.code} • {product.category}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0 ml-2">
+                      <div className="text-sm font-bold text-green-600 dark:text-green-400">
+                        {formatCurrency(product.totalValue)}
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        {formatNumber(product.quantity)} • {formatNumber(product.orderCount)} طلب
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Products Table */}
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">الأصناف المشتراة</h3>
-          <DataTable
-            columns={productColumns}
-            data={customer.products || []}
-            emptyMessage="لا توجد منتجات"
-          />
-        </div>
 
-        {/* Invoice Timeline */}
+        {/* Invoice Timeline - Interactive */}
         <div className="mb-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">
             سجل الفواتير ({formatNumber((customer.invoices || []).length)} فاتورة)
           </h3>
-          <div className="grid gap-3">
-            {(customer.invoices || []).slice(0, 10).map((invoice, index) => (
-              <div key={invoice.number} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800/50 dark:to-gray-700/50 rounded-lg hover:from-blue-50 hover:to-blue-100 dark:hover:from-blue-900/20 dark:hover:to-blue-800/20 transition-all duration-200 border border-gray-200 dark:border-gray-700">
-                <div className="flex items-center gap-4">
-                  <span className="flex items-center justify-center w-10 h-10 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full text-sm font-bold shadow-sm">
-                    {formatNumber(index + 1)}
-                  </span>
-                  <div>
-                    <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">فاتورة #{invoice.number}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      {formatDate(invoice.date, 'long')}
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {(customer.invoices || []).slice(0, 15).map((invoice, index) => {
+              const isExpanded = expandedInvoices.has(invoice.number)
+              const invoiceData = getInvoiceCategories(invoice.number)
+              
+              return (
+                <div key={invoice.number} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                  {/* Invoice Header - Clickable */}
+                  <div 
+                    onClick={() => toggleInvoice(invoice.number)}
+                    className="flex items-center justify-between p-2 sm:p-3 bg-gray-50 dark:bg-gray-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                      <span className="flex items-center justify-center w-6 h-6 sm:w-8 sm:h-8 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full text-xs font-bold flex-shrink-0">
+                        {index + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs sm:text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                          #{invoice.number}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          {formatDate(invoice.date, 'short')} • {invoiceData.itemsCount} صنف
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0 flex items-center gap-2">
+                      <div className="text-sm sm:text-base font-bold text-green-600 dark:text-green-400">
+                        {formatCurrency(invoice.total)}
+                      </div>
+                      <div className={`transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
                     </div>
                   </div>
+
+                  {/* Invoice Details - Expandable */}
+                  {isExpanded && (
+                    <div className="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
+                      {/* Category Indicators for this invoice */}
+                      {invoiceData.categories.length > 0 && (
+                        <div className="p-3 border-b border-gray-100 dark:border-gray-700">
+                          <div className="text-xs text-gray-600 dark:text-gray-400 mb-2">توزيع التصنيفات في الفاتورة:</div>
+                          <CategoryIndicators
+                            products={invoiceData.categories.map(cat => ({
+                              functionShort: cat.category,
+                              totalSales: cat.totalSpent
+                            }))}
+                            totalSales={invoiceData.totalAmount}
+                            mode="percentage"
+                            layout="horizontal"
+                            size="small"
+                            showLabels={false}
+                            showValues={true}
+                          />
+                        </div>
+                      )}
+
+                      {/* Invoice Items */}
+                      <div className="p-3">
+                        <div className="space-y-2">
+                          {invoiceData.categories.map((category, catIndex) => (
+                            <div key={catIndex} className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-2">
+                              <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                {category.category} - {formatCurrency(category.totalSpent)} ({category.percentage.toFixed(1)}%)
+                              </div>
+                              <div className="space-y-1">
+                                {category.items.map((item, itemIndex) => (
+                                  <div key={itemIndex} className="flex items-center justify-between text-xs">
+                                    <div className="min-w-0 flex-1">
+                                      <span className="text-gray-900 dark:text-gray-100 truncate">{item.name}</span>
+                                      <span className="text-gray-500 dark:text-gray-400 ml-1">({item.code})</span>
+                                    </div>
+                                    <div className="text-right flex-shrink-0 ml-2">
+                                      <span className="font-medium text-gray-900 dark:text-gray-100">
+                                        {formatNumber(item.quantity)} × {formatCurrency(item.total / item.quantity)}
+                                      </span>
+                                      <div className="text-green-600 dark:text-green-400 font-bold">
+                                        {formatCurrency(item.total)}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="text-right">
-                  <div className="text-lg font-bold text-green-600 dark:text-green-400">
-                    {formatCurrency(invoice.total)}
-                  </div>
-                </div>
-              </div>
-            ))}
-            {(customer.invoices || []).length > 10 && (
-              <div className="text-center py-2 text-sm text-gray-500 dark:text-gray-400">
-                وعرض {formatNumber((customer.invoices || []).length - 10)} فاتورة أخرى...
+              )
+            })}
+            {(customer.invoices || []).length > 15 && (
+              <div className="text-center py-2 text-xs text-gray-500 dark:text-gray-400">
+                و {formatNumber((customer.invoices || []).length - 15)} فاتورة أخرى...
               </div>
             )}
           </div>
         </div>
 
-        {/* Invoice Gaps Info */}
+        {/* Invoice Gaps Info - Compact */}
         {customer.invoiceGaps && customer.invoiceGaps.gaps && customer.invoiceGaps.gaps.length > 0 && (
-          <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-            <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">المدى الزمني بين الفواتير</h4>
-            <div className="grid grid-cols-3 gap-4 text-sm">
-              <div>
+          <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+            <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2 text-sm">المدى الزمني بين الفواتير</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div className="flex justify-between sm:block">
                 <span className="text-gray-600 dark:text-gray-400">متوسط:</span>
-                <span className="font-semibold text-blue-900 dark:text-blue-100 mr-2">
+                <span className="font-semibold text-blue-900 dark:text-blue-100 sm:mr-0 mr-2">
                   {customer.invoiceGaps?.avgGap ? formatDuration(Math.round(customer.invoiceGaps.avgGap)) : '-'}
                 </span>
               </div>
-              <div>
+              <div className="flex justify-between sm:block">
                 <span className="text-gray-600 dark:text-gray-400">الحد الأدنى:</span>
-                <span className="font-semibold text-blue-900 dark:text-blue-100 mr-2">
+                <span className="font-semibold text-blue-900 dark:text-blue-100 sm:mr-0 mr-2">
                   {customer.invoiceGaps?.minGap ? formatDuration(customer.invoiceGaps.minGap) : '-'}
                 </span>
               </div>
-              <div>
+              <div className="flex justify-between sm:block">
                 <span className="text-gray-600 dark:text-gray-400">الحد الأقصى:</span>
-                <span className="font-semibold text-blue-900 dark:text-blue-100 mr-2">
+                <span className="font-semibold text-blue-900 dark:text-blue-100 sm:mr-0 mr-2">
                   {customer.invoiceGaps?.maxGap ? formatDuration(customer.invoiceGaps.maxGap) : '-'}
                 </span>
               </div>

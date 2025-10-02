@@ -1,5 +1,5 @@
 import { Outlet } from 'react-router-dom'
-import { LayoutDashboard, Users, Package, Upload } from 'lucide-react'
+import { LayoutDashboard, Users, Package, Upload, MapPin } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import Sidebar from './Sidebar'
 
@@ -46,6 +46,7 @@ const Layout = () => {
     { path: '/', label: 'لوحة التحكم', icon: LayoutDashboard },
     { path: '/customers', label: 'العملاء', icon: Users },
     { path: '/products', label: 'المنتجات', icon: Package },
+    { path: '/regions', label: 'المناطق', icon: MapPin },
     { path: '/upload', label: 'رفع ملف', icon: Upload },
   ]
 
